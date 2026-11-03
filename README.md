@@ -24,6 +24,18 @@
 
 ## 설치
 
+### npx로 설치
+
+clone 없이 설치하고, 갱신과 삭제도 `npx skills`로 합니다. Node.js가 필요합니다.
+
+```bash
+npx skills add kgyujin/job-application-tailor-skill -g -a claude-code -a codex   # 설치
+npx skills update -g job-application-tailor                                      # 갱신
+npx skills remove -g job-application-tailor                                      # 삭제
+```
+
+`-g`는 모든 프로젝트에서 쓰도록 사용자 폴더에 설치하고, `-a`는 설치할 도구를 고릅니다. `-a`를 빼면 설치할 때 물어봅니다. 같은 컴퓨터에서 아래 직접 설치와 함께 쓰지 마세요. 두 방식이 같은 스킬 폴더를 씁니다.
+
 ### Claude Code
 
 다음 명령으로 스킬을 설치하세요:
