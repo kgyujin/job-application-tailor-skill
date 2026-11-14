@@ -3,15 +3,18 @@
 
 가운뎃점, 분량, 반복 핵심어, 동의어 반복, 반복 구절, 중복 문장, 문체 신호,
 남은 자리표시자, 다른 회사명, 참고 자료(합격 자기소개서 등) 문장 차용을 검사한다.
+넘겨준 파일 전체를 묶어 용어 통일(표기, 띄어쓰기, 한영 혼용, 외래어 표기, 공고 표기)도 검사한다.
 
 Markdown 제목 줄은 집계에서 뺀다. ## 이하 제목 아래 본문이 한 문항이며(# 는 문서 제목), 본문이 빈
-문항도 --limit 순서에 포함한다. YAML 머리말, HTML 주석, 코드 블록은 가운뎃점 검사 말고는 모두 뺀다.
+문항도 --limit 순서에 포함한다. YAML 머리말, HTML 주석, 코드 블록은 가운뎃점 검사 말고는 모두 뺀다. 인라인 코드와 URL은
+자리표시자와 용어 검사에서 뺀다.
 표준 라이브러리만 사용한다. 차단 항목이 하나라도 있으면 종료 코드 1을 돌려준다.
 
 사용 예:
   python3 check_text.py 자기소개서_회사_직무_v01.md --limit 700,1000 --unit chars
   python3 check_text.py 자기소개서.md --forbid "다른회사,옛회사" --ref 합격자소서1.md --ref 합격자소서2.md
   python3 check_text.py 기업분석_회사_v01.md --report
+  python3 check_text.py 이력서_v01.md 자기소개서_v01.md --limit 자기소개서_v01.md=700,1000 --canon "React,Node.js"
 """
 import argparse
 import json
@@ -96,7 +99,53 @@ CLICHES = [
 ]
 
 # 동의어 묶음에서 세지 않을 더 긴 낱말(예: 여러분, 목적지, 주도적)
-SYNONYM_EXCEPT_NEXT = {"여러": "분", "목적": "지", "주도": "적"}
+SYNONYM_EXCEPT_NEXT = {"여러": "분", "목적": "지", "주도": "적", "자바": "스크립트"}
+
+# 같은 대상을 가리키는 한글, 영문, 약어 표기. 한 문서 묶음 안에서는 하나만 쓴다.
+TERM_GROUPS = [
+    ("AI", "인공지능"),
+    ("ML", "머신러닝", "기계학습"),
+    ("LLM", "대규모 언어 모델", "거대 언어 모델"),
+    ("DB", "데이터베이스"),
+    ("UX", "사용자 경험"),
+    ("UI", "사용자 인터페이스"),
+    ("QA", "품질 보증"),
+    ("프론트엔드", "프런트엔드", "frontend", "front-end"),
+    ("백엔드", "backend", "back-end"),
+    ("React", "리액트"),
+    ("JavaScript", "자바스크립트"),
+    ("TypeScript", "타입스크립트"),
+    ("Python", "파이썬"),
+    ("Java", "자바"),
+    ("Spring", "스프링"),
+    ("Docker", "도커"),
+    ("Kubernetes", "쿠버네티스", "k8s"),
+    ("GitHub", "깃허브"),
+    ("애플리케이션", "어플리케이션", "앱", "어플"),
+    ("웹사이트", "웹 사이트"),
+    ("콘텐츠", "컨텐츠"),
+    ("메시지", "메세지"),
+    ("리더십", "리더쉽"),
+    ("비즈니스", "비지니스"),
+    ("아키텍처", "아키텍쳐"),
+    ("콘퍼런스", "컨퍼런스"),
+    ("론칭", "런칭"),
+]
+
+# 국립국어원 외래어 표기와 다른 흔한 표기. 공고나 회사 공식 표기면 그대로 둔다.
+NONSTANDARD = {
+    "컨텐츠": "콘텐츠", "메세지": "메시지", "리더쉽": "리더십", "비지니스": "비즈니스",
+    "아키텍쳐": "아키텍처", "셋팅": "세팅", "스케쥴": "스케줄", "워크샵": "워크숍", "플렛폼": "플랫폼",
+    "매니져": "매니저", "쥬니어": "주니어", "어플리케이션": "애플리케이션", "데이타": "데이터",
+}
+
+# 공식 대소문자 표기
+OFFICIAL = {k.lower().replace(".", "").replace("-", ""): k for k in """
+GitHub GitLab JavaScript TypeScript Node.js Next.js Vue.js NestJS React Python Java Kotlin Swift
+MySQL PostgreSQL MongoDB Redis Kafka Elasticsearch GraphQL Docker Kubernetes AWS GCP Azure
+TensorFlow PyTorch FastAPI Django Flask Spring iOS macOS Android LinkedIn YouTube Figma Jira
+Notion Slack Jenkins Terraform Linux Git HTML CSS SQL API REST JSON
+""".split()}
 
 PLACEHOLDER_RE = re.compile(
     r"\{[^}\n]*\}|TODO|TBD|\[확인[^\]]*\]|본인 확인 필요|○○|(?<![A-Za-z])(?:OO|XX)(?![A-Za-z])|\?\?\?"
@@ -121,7 +170,7 @@ def mask_markup(text):
         return "\n".join([MASK] * (m.group(0).count("\n") + 1))
 
     text = re.sub(r"<!--.*?-->", blank, text, flags=re.S)
-    text = re.sub(r"^```.*?^```[^\n]*", blank, text, flags=re.S | re.M)
+    text = re.sub(r"^[ \t]*```.*?^[ \t]*```[^\n]*", blank, text, flags=re.S | re.M)
     lines = text.split("\n")
     if lines and lines[0].strip() == "---":
         for i in range(1, len(lines)):
@@ -129,6 +178,13 @@ def mask_markup(text):
                 lines[: i + 1] = [MASK] * (i + 1)
                 break
     return lines
+
+
+def strip_inline(line):
+    """인라인 코드, URL, 링크 주소를 지운다. 자리표시자와 용어 검사에만 쓴다."""
+    line = re.sub(r"`[^`]*`", " ", line)
+    line = re.sub(r"\]\([^)]*\)", "]", line)
+    return re.sub(r"https?://\S+", " ", line)
 
 
 def split_sections(lines):
@@ -244,6 +300,108 @@ def shared_runs(words, ref_words, min_len):
     return runs
 
 
+def key_of(text):
+    return re.sub(r"[\s.\-_]", "", text.lower())
+
+
+def term_lines(paths):
+    """용어 검사용 (위치, 줄) 목록. 제목, 머리말, 주석, 코드 블록은 뺀다."""
+    out = []
+    for path in paths:
+        for no, line in enumerate(mask_markup(read_text(path)), 1):
+            if line.strip() == MASK or re.match(r"\s{0,3}#{1,6}\s", line):
+                continue
+            out.append((f"{Path(path).name}:{no}", strip_inline(line.replace(MASK, ""))))
+    return out
+
+
+def summarize(counter):
+    return ", ".join(f"'{k}' {v}회" for k, v in counter.most_common())
+
+
+def check_terms(paths, canon):
+    findings = []
+
+    def add(level, where, msg):
+        findings.append({"level": level, "where": where, "message": msg})
+
+    lines = term_lines(paths)
+    canon_keys = {key_of(c): c for c in canon}
+    canon_group = {}
+    for c in canon:
+        for group in TERM_GROUPS:
+            if any(key_of(f) == key_of(c) for f in group):
+                canon_group[group] = c
+
+    # 영문 표기(대소문자, 점, 하이픈) 혼용과 공식 표기, 공고 표기
+    forms, first_at = {}, {}
+    for where, line in lines:
+        for tok in TOKEN_RE.findall(line):
+            if tok[0].isascii() and len(tok) >= 2:
+                k = key_of(tok)
+                forms.setdefault(k, Counter())[tok] += 1
+                first_at.setdefault((k, tok), where)
+    for k, cnt in forms.items():
+        if k in canon_keys:
+            wrong = {f: n for f, n in cnt.items() if f != canon_keys[k]}
+            for f in wrong:
+                add("차단", first_at[(k, f)], f"공고 표기 '{canon_keys[k]}'와 다름: '{f}'")
+            continue
+        hint = f" (공식 표기 '{OFFICIAL[k]}')" if k in OFFICIAL else ""
+        if len(cnt) >= 2:
+            add("차단", first_at[(k, cnt.most_common(1)[0][0])], f"표기 혼용: {summarize(cnt)}{hint}")
+        elif k in OFFICIAL and OFFICIAL[k] not in cnt:
+            f = next(iter(cnt))
+            add("재검토", first_at[(k, f)], f"공식 표기는 '{OFFICIAL[k]}': '{f}' {cnt[f]}회")
+
+    # 띄어쓰기 혼용(데이터 베이스 / 데이터베이스, Type Script / TypeScript)
+    single = {}
+    for where, line in lines:
+        for tok in TOKEN_RE.findall(line):
+            single.setdefault(key_of(stem(tok)), tok)
+    for c in canon:
+        single.setdefault(key_of(c), c)
+    reported = set()
+    for where, line in lines:
+        toks = list(TOKEN_RE.finditer(line))
+        for a, b in zip(toks, toks[1:]):
+            if line[a.end():b.start()] != " ":
+                continue
+            joined = key_of(a.group(0) + stem(b.group(0)))
+            if joined in single and joined not in reported and len(joined) >= 3:
+                reported.add(joined)
+                level = "차단" if joined in canon_keys else "재검토"
+                add(level, where, f"띄어쓰기 혼용: '{a.group(0)} {b.group(0)}' / '{single[joined]}'")
+
+    # 같은 대상의 한글, 영문, 약어 혼용. '사용자 경험(UX)'처럼 처음에 괄호로 병기하면
+    # 앞의 풀어 쓴 말은 세지 않고 괄호 속 표기를 쓰는 것으로 본다.
+    text_all = "\n".join(line for _, line in lines)
+    for group in TERM_GROUPS:
+        pattern = "|".join(term_re(f) for f in sorted(group, key=len, reverse=True))
+        cnt, prev_end, prev_form = Counter(), -10, None
+        for m in re.finditer(pattern, text_all, flags=re.I):
+            form = next(f for f in group if key_of(f) == key_of(m.group(0)))
+            if prev_form and prev_form != form and text_all[prev_end:m.start()].strip() == "(":
+                cnt[prev_form] -= 1
+            cnt[form] += 1
+            prev_end, prev_form = m.end(), form
+        cnt = +cnt
+        if group in canon_group:
+            others = {f: n for f, n in cnt.items() if f != canon_group[group]}
+            if others:
+                add("차단", "전체", f"공고 표기 '{canon_group[group]}'로 통일 필요: {summarize(Counter(others))}")
+        elif len(cnt) >= 2:
+            add("재검토", "전체", f"같은 대상을 다른 용어로 씀: {summarize(cnt)}")
+
+    # 외래어 표기
+    for where, line in lines:
+        for wrong, right in NONSTANDARD.items():
+            if wrong in line and key_of(wrong) not in canon_keys:
+                add("재검토", where, f"외래어 표기 '{wrong}' → 표준 '{right}'(공고나 회사 공식 표기면 유지)")
+
+    return {"file": "(용어 통일: 넘겨준 파일 전체)", "lengths": [], "findings": findings}
+
+
 def check(path, limits, unit, forbid, refs, report_mode):
     raw = read_text(path)
     findings = []  # (등급, 위치, 내용)
@@ -258,7 +416,7 @@ def check(path, limits, unit, forbid, refs, report_mode):
     lines = mask_markup(raw)
     for no, line in enumerate(lines, 1):
         line = line.replace(MASK, "")
-        for m in PLACEHOLDER_RE.finditer(line):
+        for m in PLACEHOLDER_RE.finditer(strip_inline(line)):
             add("차단", f"{no}행", f"자리표시자 또는 확인 표시가 남음: '{m.group(0)}'")
         for name in forbid:
             for level in forbid_hits(line, name):
@@ -361,18 +519,31 @@ def check(path, limits, unit, forbid, refs, report_mode):
 def main():
     ap = argparse.ArgumentParser(description="지원서류 문장 자동 점검")
     ap.add_argument("files", nargs="+")
-    ap.add_argument("--limit", help="문항별 분량 제한. 쉼표로 여러 개를 주면 문항 순서대로 적용, 하나면 전체 적용")
+    ap.add_argument("--limit", action="append", default=[],
+                    help="문항별 분량 제한. 쉼표로 여러 개를 주면 문항 순서대로, 하나면 모든 문항에 적용. "
+                         "'파일=700,1000'처럼 쓰면 그 파일에만 적용(파일을 여러 개 넘길 때)")
     ap.add_argument("--unit", default="chars", choices=["chars", "nospace", "utf8", "cp949"],
                     help="chars=공백 포함, nospace=공백 제외, utf8/cp949=바이트")
     ap.add_argument("--forbid", default="", help="나오면 안 되는 문자열(다른 회사명 등), 쉼표로 구분")
     ap.add_argument("--ref", action="append", default=[], help="문장을 베끼면 안 되는 참고 자료(합격 자기소개서 등). 파일마다 한 번씩")
     ap.add_argument("--report", action="store_true", help="분석 보고서 모드: 같은 문장(출처 줄 등) 중복을 참고로만 표시")
+    ap.add_argument("--canon", default="", help="공고나 회사 공식 표기로 고정할 용어, 쉼표로 구분(예: React,Node.js,프론트엔드)")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
-    limits = [int(x) for x in args.limit.split(",")] if args.limit else []
+    limit_all, limit_by_file = [], {}
+    for spec in args.limit:
+        target, _, values = spec.rpartition("=")
+        nums = [int(x) for x in values.split(",") if x.strip()]
+        if target:
+            limit_by_file[Path(target).resolve()] = nums
+        else:
+            limit_all = nums
     forbid = [x.strip() for x in args.forbid.split(",") if x.strip()]
-    reports = [check(f, limits, args.unit, forbid, args.ref, args.report) for f in args.files]
+    reports = [check(f, limit_by_file.get(Path(f).resolve(), limit_all), args.unit, forbid, args.ref, args.report)
+               for f in args.files]
+    canon = [x.strip() for x in args.canon.split(",") if x.strip()]
+    reports.append(check_terms(args.files, canon))
 
     blocked = sum(1 for r in reports for f in r["findings"] if f["level"] == "차단")
     if args.json:
