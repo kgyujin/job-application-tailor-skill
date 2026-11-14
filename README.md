@@ -152,10 +152,10 @@ git clone https://github.com/kgyujin/job-application-tailor-skill.git ~/.codex/s
 ### 자동 점검만 따로 돌리기
 
 ```bash
-python3 scripts/check_text.py 자기소개서_회사_직무_v01.md --limit 700,1000 --unit chars --forbid "이전 지원 회사"
+python3 ~/.claude/skills/job-application-tailor/scripts/check_text.py 자기소개서_회사_직무_v01.md --limit 700,1000 --unit chars --forbid "이전 지원 회사"
 ```
 
-문항 질문은 `##` 제목으로 두면 분량과 반복 집계에서 빠집니다. 가운뎃점, 남은 자리표시자, 다른 회사명, 분량 초과, 같은 문장, 합격 자기소개서와 5어절 이상 일치는 차단으로, 5회 이상 반복된 핵심어와 동의어 반복은 재검토로 알려 줍니다.
+스킬을 설치한 폴더의 스크립트를 부르면 됩니다. 문항 질문은 `##` 제목으로 두면 분량과 반복 집계에서 빠집니다. 합격 자기소개서와 겹치는지 보려면 `--ref 파일`을, 분석 보고서는 `--report`를 붙입니다. 가운뎃점, 남은 자리표시자, 다른 회사명, 분량 초과, 같은 문장, 합격 자기소개서와 5어절 이상 일치는 차단으로, 5회 이상 반복된 핵심어와 동의어 반복은 재검토로 알려 줍니다.
 
 ## 지키는 원칙
 
